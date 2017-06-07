@@ -11,9 +11,9 @@ var ACC_NONE = 0;
 var ACC_ACCELERATE = 1;
 var ACC_BRAKE = 2;
 
-var WIDTH_PX = 600;   //screen width in pixels
-var HEIGHT_PX = 400; //screen height in pixels
-var SCALE = 15;      //how many pixels in a meter
+var WIDTH_PX = window.innerWidth;   //screen width in pixels
+var HEIGHT_PX = window.innerHeight; //screen height in pixels
+var SCALE = 15;  //how many pixels in a meter
 var WIDTH_M = WIDTH_PX / SCALE; //world width in meters. for this example, world is as large as the screen
 var HEIGHT_M = HEIGHT_PX / SCALE; //world height in meters
 var KEYS_DOWN = {}; //keep track of what keys are held down by the player
@@ -24,45 +24,45 @@ const CAR_LENGTH = 4;
 const CAR_WIDTH = 2;
 const SENSOR_FIELD_DEPTH = 8;
 const SENSORS = {
-    r: {
+    right: {
         x: CAR_WIDTH / 2,
         y: 0,
         angle: 0
     },
-    rr: {
+    front_right: {
         x: CAR_WIDTH / 2,
-        y: CAR_LENGTH / 2,
-        angle: 45
-    },
-    rc: {
-        x: 0,
-        y: CAR_LENGTH / 2,
-        angle: 90
-    },
-    rl: {
-        x: -CAR_WIDTH / 2,
-        y: CAR_LENGTH / 2,
-        angle: 135
-    },
-    l: {
-        x: -CAR_WIDTH / 2,
-        y: 0,
-        angle: 180
-    },
-    fl: {
-        x: -CAR_WIDTH / 2,
         y: -CAR_LENGTH / 2,
-        angle: 225
+        angle: 315
     },
-    fc: {
+    front_center: {
         x: 0,
         y: -CAR_LENGTH / 2,
         angle: 270
     },
-    fr: {
-        x: CAR_WIDTH / 2,
+    front_left: {
+        x: -CAR_WIDTH / 2,
         y: -CAR_LENGTH / 2,
-        angle: 315
+        angle: 225
+    },
+    left: {
+        x: -CAR_WIDTH / 2,
+        y: 0,
+        angle: 180
+    },
+    rear_left: {
+        x: -CAR_WIDTH / 2,
+        y: CAR_LENGTH / 2,
+        angle: 135
+    },
+    rear_center: {
+        x: 0,
+        y: CAR_LENGTH / 2,
+        angle: 90
+    },
+    rear_right: {
+        x: CAR_WIDTH / 2,
+        y: CAR_LENGTH / 2,
+        angle: 45
     }
 };
 const SENSOR_NO_OBSTACLES = -1;
@@ -392,11 +392,11 @@ function main() {
     var car = new Car({
         'width': CAR_WIDTH,
         'length': CAR_LENGTH,
-        'position': [10, 10],
+        'position': [WIDTH_M * 0.75, HEIGHT_M * 0.75],
         'angle': 0,
-        'power': 60,
-        'max_steer_angle': 20,
-        'max_speed': 60,
+        'power': 30,
+        'max_steer_angle': 25,
+        'max_speed': 40,
         'wheels': [{'x': -1, 'y': -1.2, 'width': 0.4, 'length': 0.8, 'revolving': true, 'powered': true}, //top left
             {'x': 1, 'y': -1.2, 'width': 0.4, 'length': 0.8, 'revolving': true, 'powered': true}, //top right
             {'x': -1, 'y': 1.2, 'width': 0.4, 'length': 0.8, 'revolving': false, 'powered': false}, //back left
@@ -418,10 +418,10 @@ function main() {
     props.push(new BoxProp({'size': [1, 6], 'position': [center[0] + 3, center[1]]}));
     props.push(new BoxProp({'size': [5, 1], 'position': [center[0], center[1] + 2.5]}));
 
-    var rayCastResults;
+    var rayCastResults = {};
     function resetRayCastResults() {
         for(var sensorName in SENSORS) {
-            if (SENSORS.hasOwnProperty(sensorName)) continue;
+            if (!SENSORS.hasOwnProperty(sensorName)) continue;
             rayCastResults[sensorName] = SENSOR_NO_OBSTACLES;
         }
     }
@@ -430,6 +430,53 @@ function main() {
     function rayCastCallback(sensor, fixture, point, normal, fraction) {
         rayCastResults[sensor] = fraction * SENSOR_FIELD_DEPTH;
         return fraction;
+    }
+
+    var currentPolygon = [];
+    var currentMousePosition = new box2d.b2Vec2(0, 0);
+    function drawPolygon(event) {
+        const worldX = event.clientX / SCALE;
+        const worldY = event.clientY / SCALE;
+        currentPolygon.push(new box2d.b2Vec2(worldX, worldY));
+        const distance = currentPolygon[0].Copy();
+        distance.Subtract(currentPolygon[currentPolygon.length - 1]);
+        if (currentPolygon.length > 3 && distance.Length() < 1) {
+            finishPolygon();
+        }
+    }
+    function updateMouseLocation(event) {
+        currentMousePosition.x = event.clientX / SCALE;
+        currentMousePosition.y = event.clientY / SCALE;
+    }
+
+    display._canvas.onclick = drawPolygon.bind(this);
+    display._canvas.onmousemove = updateMouseLocation.bind(this);
+    function finishPolygon() {
+        var polygon = currentPolygon.slice(0, currentPolygon.length - 1).map(function(v) {
+            return [v.x, v.y];
+        });
+        decomp.makeCCW(polygon);
+        var convexPolygons = decomp.quickDecomp(polygon);
+        for(var k = 0; k < convexPolygons.length; k++) {
+            var convertedPolygon = convexPolygons[k].map(function(v){
+                return new box2d.b2Vec2(v[0], v[1]);
+            });
+            //initialize body
+            var bdef = new box2d.b2BodyDef();
+            bdef.angle = 0;
+            bdef.fixedRotation = true;
+            var body = b2world.CreateBody(bdef);
+
+            //initialize shape
+            var fixdef = new box2d.b2FixtureDef();
+            fixdef.shape = new box2d.b2PolygonShape();
+            fixdef.shape.SetAsArray(convertedPolygon, convertedPolygon.length);
+            fixdef.restitution = 0.4; //positively bouncy!
+            body.CreateFixture(fixdef);
+
+
+        }
+        currentPolygon = [];
     }
 
     function tick(msDuration) {
@@ -467,6 +514,7 @@ function main() {
         //let box2d draw it's bodies
         b2world.DrawDebugData();
 
+        resetRayCastResults();
         var carAngle = car.body.GetAngle();
         for(sensorName in SENSORS) {
             if (!SENSORS.hasOwnProperty(sensorName)) continue;
@@ -479,15 +527,29 @@ function main() {
             const rayEnd = rayStart.Copy();
             rayEnd.Add(ray);
 
-            //b2world.RayCast(rayCastCallback, rayStart, rayEnd);
+            b2world.RayCast(rayCastCallback.bind(this, sensorName), rayStart, rayEnd);
             debugDraw.DrawSegment(rayStart, rayEnd, [0, 0, 0]);
         }
 
-        //console.log(rayCastResults);
-
         //fps and car speed display
         display.blit(font.render('FPS: ' + parseInt((1000) / msDuration)), [25, 25]);
-        display.blit(font.render('SPEED: ' + parseInt(Math.ceil(car.getSpeedKMH())) + ' km/h'), [25, 55]);
+        display.blit(font.render('Speed: ' + parseInt(Math.floor(car.getSpeedKMH())) + ' km/h'), [25, 55]);
+        var i = 0;
+        for(sensorName in SENSORS) {
+            if (!SENSORS.hasOwnProperty(sensorName)) continue;
+            var text = rayCastResults[sensorName] == SENSOR_NO_OBSTACLES
+                ? '-'
+                : (Math.round(rayCastResults[sensorName] * 100) / 100) + 'm';
+            display.blit(font.render(sensorName + ': '  + text), [25, 85 + 30 * i]);
+            i++;
+        }
+
+        for(var j = 1; j < currentPolygon.length; j++) {
+            debugDraw.DrawSegment(currentPolygon[j-1], currentPolygon[j], [0, 0, 0]);
+        }
+        if (currentPolygon.length >= 1) {
+            debugDraw.DrawSegment(currentPolygon[currentPolygon.length - 1], currentMousePosition, [0, 0, 0]);
+        }
 
         return;
     };
@@ -498,6 +560,7 @@ function main() {
         //key release
         else if (event.type === gamejs.event.KEY_UP) KEYS_DOWN[event.key] = false;
     };
+
     gamejs.onTick(tick, this);
     gamejs.onEvent(handleEvent);
 

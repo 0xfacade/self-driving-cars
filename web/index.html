@@ -2,21 +2,15 @@
 <html>
 <head>
     <meta charset="utf-8" />
-    <title>Top Down Car Example Using Gamejs & Box2D</title>
-<!-- Styling -->
+    <title>A self-driving car</title>
     <style type=text/css>
-        body{
-           background:#fff;
-           color:#222;
-           margin:1em 0 2em 6em;
-           padding:0;
-        }
-        #gjs-loader {
-            width: 50%;
-            height: 50%;
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
         }
     </style>
-<!-- Start javascript/main.js -->
+    <script src="javascript/decomp.js"></script>
     <script src="public/yabble.js"></script>
     <script src="public/gamejs.min.js"></script>
     <script>
@@ -24,10 +18,8 @@
         require.run('main')
     </script>
 </head>
-<!-- Html -->
 <body>
     <div>
-        <img id="gjs-loader" src="public/ajax-loader.gif">
         <canvas id="gjs-canvas"></canvas>
     </div>
 </body>
