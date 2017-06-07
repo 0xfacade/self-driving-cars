@@ -11,7 +11,7 @@ var ACC_NONE = 0;
 var ACC_ACCELERATE = 1;
 var ACC_BRAKE = 2;
 
-var WIDTH_PX = window.innerWidth;   //screen width in pixels
+var WIDTH_PX = window.innerWidth * 0.7;   //screen width in pixels
 var HEIGHT_PX = window.innerHeight; //screen height in pixels
 var SCALE = 15;  //how many pixels in a meter
 var WIDTH_M = WIDTH_PX / SCALE; //world width in meters. for this example, world is as large as the screen
@@ -22,47 +22,54 @@ var b2world;
 
 const CAR_LENGTH = 4;
 const CAR_WIDTH = 2;
-const SENSOR_FIELD_DEPTH = 8;
 const SENSORS = {
     right: {
         x: CAR_WIDTH / 2,
         y: 0,
-        angle: 0
+        angle: 0,
+        range: 8
     },
     front_right: {
         x: CAR_WIDTH / 2,
         y: -CAR_LENGTH / 2,
-        angle: 315
+        angle: 315,
+        range: 8
     },
     front_center: {
         x: 0,
         y: -CAR_LENGTH / 2,
-        angle: 270
+        angle: 270,
+        range: 16
     },
     front_left: {
         x: -CAR_WIDTH / 2,
         y: -CAR_LENGTH / 2,
-        angle: 225
+        angle: 225,
+        range: 8
     },
     left: {
         x: -CAR_WIDTH / 2,
         y: 0,
-        angle: 180
+        angle: 180,
+        range: 8
     },
     rear_left: {
         x: -CAR_WIDTH / 2,
         y: CAR_LENGTH / 2,
-        angle: 135
+        angle: 135,
+        range: 8
     },
     rear_center: {
         x: 0,
         y: CAR_LENGTH / 2,
-        angle: 90
+        angle: 90,
+        range: 16
     },
     rear_right: {
         x: CAR_WIDTH / 2,
         y: CAR_LENGTH / 2,
-        angle: 45
+        angle: 45,
+        range: 8
     }
 };
 const SENSOR_NO_OBSTACLES = -1;
@@ -412,11 +419,14 @@ function main() {
     props.push(new BoxProp({'size': [WIDTH_M, 1], 'position': [WIDTH_M / 2, HEIGHT_M - 0.5]}));
     props.push(new BoxProp({'size': [1, HEIGHT_M - 2], 'position': [WIDTH_M - 0.5, HEIGHT_M / 2]}));
 
+
+    /*
     //pen in the center
     var center = [WIDTH_M / 2, HEIGHT_M / 2];
     props.push(new BoxProp({'size': [1, 6], 'position': [center[0] - 3, center[1]]}));
     props.push(new BoxProp({'size': [1, 6], 'position': [center[0] + 3, center[1]]}));
     props.push(new BoxProp({'size': [5, 1], 'position': [center[0], center[1] + 2.5]}));
+    */
 
     var rayCastResults = {};
     function resetRayCastResults() {
@@ -428,7 +438,7 @@ function main() {
     resetRayCastResults();
 
     function rayCastCallback(sensor, fixture, point, normal, fraction) {
-        rayCastResults[sensor] = fraction * SENSOR_FIELD_DEPTH;
+        rayCastResults[sensor] = fraction * SENSORS[sensor].range;
         return fraction;
     }
 
@@ -479,6 +489,8 @@ function main() {
         currentPolygon = [];
     }
 
+    var isRecordingData = false;
+    var recordedData = [];
     function tick(msDuration) {
         //GAME LOOP
 
@@ -523,7 +535,7 @@ function main() {
             const rayStart = car.body.GetWorldPoint(new box2d.b2Vec2(sensor.x, sensor.y));
             // b2Body.GetAngle(): angle between y axis and body orientation, clockwise (!)
             const ray = new box2d.b2Vec2(Math.cos(carAngle + sensorAngle), Math.sin(carAngle + sensorAngle));
-            ray.Multiply(SENSOR_FIELD_DEPTH);
+            ray.Multiply(sensor.range);
             const rayEnd = rayStart.Copy();
             rayEnd.Add(ray);
 
@@ -551,18 +563,46 @@ function main() {
             debugDraw.DrawSegment(currentPolygon[currentPolygon.length - 1], currentMousePosition, [0, 0, 0]);
         }
 
+        if (isRecordingData) {
+            const telemetry = {
+                wheel_angle: car.wheel_angle,
+                velocity: car.body.GetLinearVelocity(),
+                sensors: rayCastResults,
+                keys: KEYS_DOWN,
+            };
+            recordedData.push(telemetry);
+        }
+
         return;
     };
 
+    function startDownloadData() {
+        var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(recordedData));
+        var dlAnchorElem = document.getElementById('downloadAnchor');
+        dlAnchorElem.setAttribute("href", dataStr);
+        dlAnchorElem.setAttribute("download", "data_" + Date.now() + ".json");
+        dlAnchorElem.click();
+    }
 
     function handleEvent(event) {
-        if (event.type === gamejs.event.KEY_DOWN) KEYS_DOWN[event.key] = true;
-        //key release
-        else if (event.type === gamejs.event.KEY_UP) KEYS_DOWN[event.key] = false;
-    };
+        if (event.type === gamejs.event.KEY_DOWN) {
+            KEYS_DOWN[event.key] = true;
+        } else if (event.type === gamejs.event.KEY_UP) {
+            if (event.key === gamejs.event.K_SPACE) {
+                if(isRecordingData) {
+                    isRecordingData = false;
+                    startDownloadData();
+                    recordedData = [];
+                } else {
+                    isRecordingData = true;
+                }
+            }
+            KEYS_DOWN[event.key] = false;
+        }
+    }
 
     gamejs.onTick(tick, this);
-    gamejs.onEvent(handleEvent);
+    gamejs.onEvent(handleEvent.bind(this));
 
 }
 

@@ -4,10 +4,30 @@
     <meta charset="utf-8" />
     <title>A self-driving car</title>
     <style type=text/css>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            width: 100%;
+        }
         canvas {
             position: absolute;
             top: 0;
             left: 0;
+            width: 70%;
+        }
+        .sidebar {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 30%;
+            padding: 10px;
+        }
+        .sidebar h1 {
+            margin-top: 0;
+        }
+        #downloadAnchor {
+            display: none;
         }
     </style>
     <script src="javascript/decomp.js"></script>
@@ -19,8 +39,11 @@
     </script>
 </head>
 <body>
-    <div>
-        <canvas id="gjs-canvas"></canvas>
+    <canvas id="gjs-canvas"></canvas>
+    <div class="sidebar">
+        <h1>Self-driving cars</h1>
+        <p>Use your mouse to add obstacles to the arena.</p>
+        <a id="downloadAnchor"></a>
     </div>
 </body>
 </html>
