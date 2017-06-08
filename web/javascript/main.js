@@ -72,7 +72,16 @@ const SENSORS = {
         range: 8
     }
 };
+const SENSOR_NAMES_SORTED = Object.keys(SENSORS).filter(function(s) {return SENSORS.hasOwnProperty(s)}).sort();
 const SENSOR_NO_OBSTACLES = -1;
+
+const model = new KerasJS.Model({
+  filepaths: {
+    model: './model.json',
+    weights: './model_weights.buf',
+    metadata: './model_metadata.json'
+  }
+});
 
 //initialize font to draw text with
 var font = new gamejs.font.Font('16px Sans-serif');
@@ -489,8 +498,33 @@ function main() {
         currentPolygon = [];
     }
 
+    function sendKeyEvent(name, keycode) {
+        var keyboardEvent = document.createEvent("KeyboardEvent");
+        var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? "initKeyboardEvent" : "initKeyEvent";
+        keyboardEvent[initMethod](
+                            name, // event type : keydown, keyup, keypress
+                            true, // bubbles
+                            true, // cancelable
+                            window, // viewArg: should be window
+                            false, // ctrlKeyArg
+                            false, // altKeyArg
+                            false, // shiftKeyArg
+                            false, // metaKeyArg
+                            keycode, // keyCodeArg : unsigned long the virtual key code, else 0
+                            0 // charCodeArgs : unsigned long the Unicode character associated with the depressed key, else 0
+        );
+        document.dispatchEvent(keyboardEvent);
+    }
+
+    var autoSteeringOn = false;
+    $('#toggleAutopilot').click(function(){
+        autoSteeringOn = !autoSteeringOn;
+        $('#autopilotIndicator').text(autoSteeringOn ? 'on' : 'off');
+    });
+
     var isRecordingData = false;
     var recordedData = [];
+    var lastPredictionPressedKeys = [];
     function tick(msDuration) {
         //GAME LOOP
 
@@ -568,13 +602,55 @@ function main() {
                 wheel_angle: car.wheel_angle,
                 velocity: car.body.GetLinearVelocity(),
                 sensors: rayCastResults,
-                keys: KEYS_DOWN,
+                pressed_keys: Object.keys(KEYS_DOWN).filter(function(k) {
+                    return KEYS_DOWN.hasOwnProperty(k) && KEYS_DOWN[k]
+                }).map(function(k) {
+                    return parseInt(k);
+                }).filter(function(k){
+                    return k >= 37 && k <= 40;
+                })
             };
             recordedData.push(telemetry);
         }
 
+
+        if (autoSteeringOn) {
+            for(var l = 0; l < lastPredictionPressedKeys.length; l++) {
+                sendKeyEvent('keyup', lastPredictionPressedKeys[l]);
+            }
+            lastPredictionPressedKeys = [];
+
+            modelInput = [car.body.GetLinearVelocity().Length(), (car.wheel_angle + 25.0) / 50.0];
+            SENSOR_NAMES_SORTED.forEach(function(sensorName) {
+                modelInput.push(rayCastResults[sensorName] / SENSORS[sensorName].range);
+            });
+
+            model.predict({input: new Float32Array(modelInput)}).then(function(output){
+                const keyProbabilities = output['output'];
+
+
+                console.log(keyProbabilities);
+
+                // right, up, left, down
+                if(keyProbabilities[0] > 0.3) lastPredictionPressedKeys.push(39);
+                if(keyProbabilities[1] > 0.3) lastPredictionPressedKeys.push(38);
+                if(keyProbabilities[2] > 0.3) lastPredictionPressedKeys.push(37);
+                if(keyProbabilities[3] > 0.3) lastPredictionPressedKeys.push(40);
+
+
+                for(var l = 0; l < lastPredictionPressedKeys.length; l++) {
+                    sendKeyEvent('keydown', lastPredictionPressedKeys[l]);
+                }
+            }).catch(function(error){
+                console.error(error);
+                debugger;
+            });
+        }
+
         return;
     };
+
+
 
     function startDownloadData() {
         var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(recordedData));
@@ -606,4 +682,7 @@ function main() {
 
 }
 
-gamejs.ready(main);
+model.ready().then(function() {
+    gamejs.ready(main);
+});
+

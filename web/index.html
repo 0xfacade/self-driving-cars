@@ -30,6 +30,11 @@
             display: none;
         }
     </style>
+    <script
+			  src="https://code.jquery.com/jquery-3.2.1.min.js"
+			  integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4="
+			  crossorigin="anonymous"></script>
+    <script src="javascript/keras.js"></script>
     <script src="javascript/decomp.js"></script>
     <script src="public/yabble.js"></script>
     <script src="public/gamejs.min.js"></script>
@@ -42,8 +47,12 @@
     <canvas id="gjs-canvas"></canvas>
     <div class="sidebar">
         <h1>Self-driving cars</h1>
+        <p>Drive the car with the arrow keys.</p>
         <p>Use your mouse to add obstacles to the arena.</p>
+        <button id="toggleAutopilot">Toggle autopilot</button>
+        <p>Autopilot is: <span id="autopilotIndicator">off</span>.</p>
         <a id="downloadAnchor"></a>
+        <small>Press space to start recording telemetry for machine learning. Press space again to download the recorded data.</small>
     </div>
 </body>
 </html>
