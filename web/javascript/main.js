@@ -19,6 +19,13 @@ var HEIGHT_M = HEIGHT_PX / SCALE; //world height in meters
 var KEYS_DOWN = {}; //keep track of what keys are held down by the player
 var b2world;
 
+const RIGHT = 39;
+const UP = 38;
+const LEFT = 37;
+const DOWN = 40;
+
+const ACTION_KEYCODE = {0: [RIGHT], 1: [RIGHT, UP], 2: [UP], 3: [UP, LEFT], 4: [LEFT], 5: [LEFT, DOWN], 6: [DOWN], 7: [DOWN, RIGHT]};
+
 
 const CAR_LENGTH = 4;
 const CAR_WIDTH = 2;
@@ -75,13 +82,48 @@ const SENSORS = {
 const SENSOR_NAMES_SORTED = Object.keys(SENSORS).filter(function(s) {return SENSORS.hasOwnProperty(s)}).sort();
 const SENSOR_NO_OBSTACLES = -1;
 
-const model = new KerasJS.Model({
-  filepaths: {
-    model: './model.json',
-    weights: './model_weights.buf',
-    metadata: './model_metadata.json'
-  }
-});
+// neural network code
+var num_inputs = 8;
+var num_actions = 8;
+var temporal_window = 1; // amount of temporal memory. 0 = agent lives in-the-moment :)
+var network_size = num_inputs*temporal_window + num_actions*temporal_window + num_inputs;
+
+// the value function network computes a value of taking any of the possible actions
+// given an input state. Here we specify one explicitly the hard way
+// but user could also equivalently instead use opt.hidden_layer_sizes = [20,20]
+// to just insert simple relu hidden layers.
+var layer_defs = [];
+layer_defs.push({type:'input', out_sx:1, out_sy:1, out_depth:network_size});
+layer_defs.push({type:'fc', num_neurons: 50, activation:'relu'});
+layer_defs.push({type:'fc', num_neurons: 50, activation:'relu'});
+layer_defs.push({type:'regression', num_neurons:num_actions});
+
+// options for the Temporal Difference learner that trains the above net
+// by backpropping the temporal difference learning rule.
+var tdtrainer_options = {learning_rate:0.001, momentum:0.0, batch_size:64, l2_decay:0.01};
+
+var opt = {};
+opt.temporal_window = temporal_window;
+opt.experience_size = 30000;
+opt.start_learn_threshold = 1000;
+opt.gamma = 0.7;
+opt.learning_steps_total = 200000;
+opt.learning_steps_burnin = 3000;
+opt.epsilon_min = 0.05;
+opt.epsilon_test_time = 0.05;
+opt.layer_defs = layer_defs;
+opt.tdtrainer_options = tdtrainer_options;
+
+const brain = new deepqlearn.Brain(num_inputs, num_actions, opt); // woohoo
+window.brain = brain;
+
+function getBrainASJson() {
+    return brain.value_net.toJSON();
+}
+
+function loadBrainFromJson(json) {
+    brain.value_net.fromJSON(json);
+}
 
 //initialize font to draw text with
 var font = new gamejs.font.Font('16px Sans-serif');
@@ -441,7 +483,7 @@ function main() {
     function resetRayCastResults() {
         for(var sensorName in SENSORS) {
             if (!SENSORS.hasOwnProperty(sensorName)) continue;
-            rayCastResults[sensorName] = SENSOR_NO_OBSTACLES;
+            rayCastResults[sensorName] = SENSORS[sensorName].range;
         }
     }
     resetRayCastResults();
@@ -492,8 +534,6 @@ function main() {
             fixdef.shape.SetAsArray(convertedPolygon, convertedPolygon.length);
             fixdef.restitution = 0.4; //positively bouncy!
             body.CreateFixture(fixdef);
-
-
         }
         currentPolygon = [];
     }
@@ -517,6 +557,8 @@ function main() {
     }
 
     var autoSteeringOn = false;
+    var framesSinceLastReward = 0;
+    var framesSinceLastDecision = 0;
     $('#toggleAutopilot').click(function(){
         autoSteeringOn = !autoSteeringOn;
         $('#autopilotIndicator').text(autoSteeringOn ? 'on' : 'off');
@@ -613,39 +655,73 @@ function main() {
             recordedData.push(telemetry);
         }
 
-
         if (autoSteeringOn) {
-            for(var l = 0; l < lastPredictionPressedKeys.length; l++) {
-                sendKeyEvent('keyup', lastPredictionPressedKeys[l]);
-            }
-            lastPredictionPressedKeys = [];
+            //modelInput = [car.body.GetLinearVelocity().Length(), (car.wheel_angle + 25.0) / 50.0];
+            if (framesSinceLastDecision >= 15) {
+                modelInput = [];
+                SENSOR_NAMES_SORTED.forEach(function (sensorName) {
+                    modelInput.push(rayCastResults[sensorName] / SENSORS[sensorName].range);
+                });
 
-            modelInput = [car.body.GetLinearVelocity().Length(), (car.wheel_angle + 25.0) / 50.0];
-            SENSOR_NAMES_SORTED.forEach(function(sensorName) {
-                modelInput.push(rayCastResults[sensorName] / SENSORS[sensorName].range);
-            });
+                const action = brain.forward(modelInput); // action is an int in [0, num_actions)
+                const newKeys = ACTION_KEYCODE[action];
 
-            model.predict({input: new Float32Array(modelInput)}).then(function(output){
-                const keyProbabilities = output['output'];
-
-
-                console.log(keyProbabilities);
-
-                // right, up, left, down
-                if(keyProbabilities[0] > 0.3) lastPredictionPressedKeys.push(39);
-                if(keyProbabilities[1] > 0.3) lastPredictionPressedKeys.push(38);
-                if(keyProbabilities[2] > 0.3) lastPredictionPressedKeys.push(37);
-                if(keyProbabilities[3] > 0.3) lastPredictionPressedKeys.push(40);
-
-
-                for(var l = 0; l < lastPredictionPressedKeys.length; l++) {
-                    sendKeyEvent('keydown', lastPredictionPressedKeys[l]);
+                for (var l = 0; l < lastPredictionPressedKeys.length; l++) {
+                    if (newKeys.indexOf(lastPredictionPressedKeys[l]) != -1) {
+                        continue;
+                    }
+                    sendKeyEvent('keyup', lastPredictionPressedKeys[l]);
                 }
-            }).catch(function(error){
-                console.error(error);
-                debugger;
-            });
+                lastPredictionPressedKeys = [];
+                lastPredictionPressedKeys = lastPredictionPressedKeys.concat(newKeys);
+                framesSinceLastDecision = 0;
+            }
+            framesSinceLastDecision++;
+
+            for (var l = 0; l < lastPredictionPressedKeys.length; l++) {
+                sendKeyEvent('keydown', lastPredictionPressedKeys[l]);
+            }
+
+            if (framesSinceLastReward >= 15){
+                framesSinceLastReward = 0;
+
+                // First, we want a higher reward for higher speeds.
+                var reward = car.body.GetLinearVelocity().Length() / 12; // 12 is the max speed (between 0 and 1)
+
+                // But, if we are going backwards, we want to give
+                // either a smaller reward or a negative reward (punishment)
+                const v = car.body.GetLinearVelocity();
+                var angleToStraight = 0;
+                if (v.Length() > 0) {
+                    const straight = car.body.GetWorldPoint(new box2d.b2Vec2(0, -CAR_LENGTH / 2));
+                    straight.Subtract(car.body.GetWorldPoint(new box2d.b2Vec2(0, 0)));
+                    const v = car.body.GetLinearVelocity();
+                    angleToStraight = Math.acos((straight.x * v.x + straight.y * v.y) / (straight.Length() * v.Length())) / Math.PI * 180;
+                }
+                if (angleToStraight >= 90) {
+                    // We are going backwards.
+                    reward = -0.1;
+                }
+
+                // check if there are any sensors that detect an obstacle at less than 30cm
+                // if so, give negative reward
+                var closestObstacleDistance = -1;
+                SENSOR_NAMES_SORTED.forEach(function (sensorName) {
+                    const v = rayCastResults[sensorName];
+                    if (v >= 0 && v <= 0.3 && v < closestObstacleDistance) {
+                        closestObstacleDistance = v;
+                    }
+                });
+                if (closestObstacleDistance != -1) {
+                    reward = -1 / closestObstacleDistance;
+                    reward = Math.min(reward, -10);
+                    // between -3.33 and -10
+                }
+                brain.backward(reward);
+            }
+            framesSinceLastReward++;
         }
+
 
         return;
     };
@@ -682,7 +758,5 @@ function main() {
 
 }
 
-model.ready().then(function() {
-    gamejs.ready(main);
-});
+gamejs.ready(main);
 
