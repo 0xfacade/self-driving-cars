@@ -567,6 +567,8 @@ function main() {
     var isRecordingData = false;
     var recordedData = [];
     var lastPredictionPressedKeys = [];
+    var accumulatedReward = 0;
+    var didCrash = false;
     function tick(msDuration) {
         //GAME LOOP
 
@@ -655,9 +657,11 @@ function main() {
             recordedData.push(telemetry);
         }
 
+
+        const rewardRate = 120;
+        const decisionRate = 10;
         if (autoSteeringOn) {
-            //modelInput = [car.body.GetLinearVelocity().Length(), (car.wheel_angle + 25.0) / 50.0];
-            if (framesSinceLastDecision >= 15) {
+            if (framesSinceLastDecision >= decisionRate) {
                 modelInput = [];
                 SENSOR_NAMES_SORTED.forEach(function (sensorName) {
                     modelInput.push(rayCastResults[sensorName] / SENSORS[sensorName].range);
@@ -682,42 +686,52 @@ function main() {
                 sendKeyEvent('keydown', lastPredictionPressedKeys[l]);
             }
 
-            if (framesSinceLastReward >= 15){
-                framesSinceLastReward = 0;
+            // First, we want a higher reward for higher speeds.
+            var reward = car.body.GetLinearVelocity().Length() / 12 / 10; // 12 is the max speed
 
-                // First, we want a higher reward for higher speeds.
-                var reward = car.body.GetLinearVelocity().Length() / 12; // 12 is the max speed (between 0 and 1)
-
-                // But, if we are going backwards, we want to give
-                // either a smaller reward or a negative reward (punishment)
+            // But, if we are going backwards, we want to give
+            // either a smaller reward or a negative reward (punishment)
+            const v = car.body.GetLinearVelocity();
+            var angleToStraight = 0;
+            if (v.Length() > 0) {
+                const straight = car.body.GetWorldPoint(new box2d.b2Vec2(0, -CAR_LENGTH / 2));
+                straight.Subtract(car.body.GetWorldPoint(new box2d.b2Vec2(0, 0)));
                 const v = car.body.GetLinearVelocity();
-                var angleToStraight = 0;
-                if (v.Length() > 0) {
-                    const straight = car.body.GetWorldPoint(new box2d.b2Vec2(0, -CAR_LENGTH / 2));
-                    straight.Subtract(car.body.GetWorldPoint(new box2d.b2Vec2(0, 0)));
-                    const v = car.body.GetLinearVelocity();
-                    angleToStraight = Math.acos((straight.x * v.x + straight.y * v.y) / (straight.Length() * v.Length())) / Math.PI * 180;
-                }
-                if (angleToStraight >= 90) {
-                    // We are going backwards.
-                    reward = -0.1;
-                }
+                angleToStraight = Math.acos((straight.x * v.x + straight.y * v.y) / (straight.Length() * v.Length())) / Math.PI * 180;
+            }
+            if (angleToStraight >= 90) {
+                // We are going backwards.
+                reward *= 0.1;
+            }
 
-                // check if there are any sensors that detect an obstacle at less than 30cm
-                // if so, give negative reward
-                var closestObstacleDistance = -1;
-                SENSOR_NAMES_SORTED.forEach(function (sensorName) {
-                    const v = rayCastResults[sensorName];
-                    if (v >= 0 && v <= 0.3 && v < closestObstacleDistance) {
-                        closestObstacleDistance = v;
-                    }
-                });
-                if (closestObstacleDistance != -1) {
-                    reward = -1 / closestObstacleDistance;
-                    reward = Math.min(reward, -10);
-                    // between -3.33 and -10
+            // check if there are any sensors that detect an obstacle at less than 30cm
+            // if so, give negative reward
+            var closestObstacleDistance = 100000;
+            SENSOR_NAMES_SORTED.forEach(function(sensorName){
+                if(rayCastResults[sensorName] < closestObstacleDistance) {
+                    closestObstacleDistance = rayCastResults[sensorName];
                 }
-                brain.backward(reward);
+            });
+            if (closestObstacleDistance <= 0.5) {
+                reward = -0.5 / closestObstacleDistance;
+                reward = Math.min(reward, -10);
+            }
+            if (closestObstacleDistance <= 0.1) {
+                didCrash = true;
+            }
+            accumulatedReward += reward;
+
+            if (framesSinceLastReward >= rewardRate){
+                framesSinceLastReward = 0;
+                accumulatedReward = Math.max(-10, accumulatedReward);
+                console.log(accumulatedReward);
+                if(didCrash) {
+                    accumulatedReward = -10;
+                    console.log("Car crashed!");
+                }
+                brain.backward(accumulatedReward);
+                accumulatedReward = 0;
+                didCrash = false;
             }
             framesSinceLastReward++;
         }
