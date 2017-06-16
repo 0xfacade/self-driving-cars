@@ -567,8 +567,13 @@ function main() {
     var isRecordingData = false;
     var recordedData = [];
     var lastPredictionPressedKeys = [];
-    var accumulatedReward = 0;
-    var didCrash = false;
+
+    var averageSpeed = 0;
+    var framesReversing = 0;
+    var framesGoingStraight = 0;
+    var framesCrashing = 0;
+    var lastCarPosition = car.body.GetWorldCenter();
+
     function tick(msDuration) {
         //GAME LOOP
 
@@ -658,9 +663,10 @@ function main() {
         }
 
 
-        const rewardRate = 120;
+        const rewardRate = 40;
         const decisionRate = 10;
         if (autoSteeringOn) {
+
             if (framesSinceLastDecision >= decisionRate) {
                 modelInput = [];
                 SENSOR_NAMES_SORTED.forEach(function (sensorName) {
@@ -686,52 +692,52 @@ function main() {
                 sendKeyEvent('keydown', lastPredictionPressedKeys[l]);
             }
 
-            // First, we want a higher reward for higher speeds.
-            var reward = car.body.GetLinearVelocity().Length() / 12 / 10; // 12 is the max speed
-
-            // But, if we are going backwards, we want to give
-            // either a smaller reward or a negative reward (punishment)
-            const v = car.body.GetLinearVelocity();
-            var angleToStraight = 0;
-            if (v.Length() > 0) {
+            // Update the statistics which will be used by the reward function
+            var currentVelocity = car.body.GetLinearVelocity();
+            var currentSpeed = currentVelocity.Length();
+            averageSpeed += currentSpeed;
+            // Check if we are going forwards or backwards.
+            if (currentSpeed > 0) {
                 const straight = car.body.GetWorldPoint(new box2d.b2Vec2(0, -CAR_LENGTH / 2));
                 straight.Subtract(car.body.GetWorldPoint(new box2d.b2Vec2(0, 0)));
-                const v = car.body.GetLinearVelocity();
-                angleToStraight = Math.acos((straight.x * v.x + straight.y * v.y) / (straight.Length() * v.Length())) / Math.PI * 180;
-            }
-            if (angleToStraight >= 90) {
-                // We are going backwards.
-                reward *= 0.1;
+                var angleToStraight = Math.acos((straight.x * currentVelocity.x + straight.y * currentVelocity.y)
+                        / (straight.Length() * currentSpeed)) / Math.PI * 180;
+                if (angleToStraight >= 90) {
+                    // We are going backwards.
+                    framesReversing++;
+                } else {
+                    framesGoingStraight++;
+                }
             }
 
-            // check if there are any sensors that detect an obstacle at less than 30cm
-            // if so, give negative reward
+            // check for crashes
             var closestObstacleDistance = 100000;
             SENSOR_NAMES_SORTED.forEach(function(sensorName){
                 if(rayCastResults[sensorName] < closestObstacleDistance) {
                     closestObstacleDistance = rayCastResults[sensorName];
                 }
             });
-            if (closestObstacleDistance <= 0.5) {
-                reward = -0.5 / closestObstacleDistance;
-                reward = Math.min(reward, -10);
-            }
             if (closestObstacleDistance <= 0.1) {
-                didCrash = true;
+                framesCrashing++;
             }
-            accumulatedReward += reward;
 
             if (framesSinceLastReward >= rewardRate){
+                averageSpeed = averageSpeed / framesSinceLastReward;
+                const traveled = car.body.GetWorldCenter().Copy();
+                traveled.Subtract(lastCarPosition);
+                const distanceTraveled = traveled.Length();
+                lastCarPosition = car.body.GetWorldCenter().Copy();
+
+                var reward = (-8 * framesCrashing / framesSinceLastReward)
+                    + (1 * framesGoingStraight / framesSinceLastReward * averageSpeed / 2);
+                console.log(reward);
+                brain.backward(reward);
+
                 framesSinceLastReward = 0;
-                accumulatedReward = Math.max(-10, accumulatedReward);
-                console.log(accumulatedReward);
-                if(didCrash) {
-                    accumulatedReward = -10;
-                    console.log("Car crashed!");
-                }
-                brain.backward(accumulatedReward);
-                accumulatedReward = 0;
-                didCrash = false;
+                framesGoingStraight = 0;
+                framesCrashing = 0;
+                framesReversing = 0;
+                averageSpeed = 0;
             }
             framesSinceLastReward++;
         }
